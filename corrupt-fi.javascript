@@ -1,0 +1,316 @@
+const canvas = document.getElementById('threeCanvas');
+const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+// Function to handle window resize
+function resizeCanvas() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+// Add lighting
+const ambientLight = new THREE.AmbientLight(0x404040);
+scene.add(ambientLight);
+
+const pointLight = new THREE.PointLight(0xffffff, 1);
+pointLight.position.set(0, 5, 10);
+scene.add(pointLight);
+
+let hypercubeVertices4D = [];
+let currentGeometry; // Store the current geometry
+let vertices3D = []; // Store the projected 3D vertices
+
+function createHypercubeVertices() {
+    hypercubeVertices4D = [];
+    for (let i = -1; i <= 1; i += 2) {
+        for (let j = -1; j <= 1; j += 2) {
+            for (let k = -1; k <= 1; k += 2) {
+                for (let l = -1; l <= 1; l += 2) {
+                    hypercubeVertices4D.push([i, j, k, l]);
+                }
+            }
+        }
+    }
+    return hypercubeVertices4D;
+}
+
+function create4DTriangleVertices() {
+      hypercubeVertices4D = [
+        [1, 1, 1, 1],
+        [-1, -1, 1, 1],
+        [-1, 1, -1, 1],
+        [1, -1, -1, 1],
+        [0, 0, 0, -1]
+    ];
+    return hypercubeVertices4D;
+}
+
+
+// 4D to 3D projection (Perspective)
+function project4Dto3D(vertex4D, projectionFactor) {
+    const w = vertex4D[0];
+    const x = vertex4D[1];
+    const y = vertex4D[2];
+    const z = vertex4D[3];
+    const factor = projectionFactor / (projectionFactor - w);
+    return [x * factor, y * factor, z * factor];
+}
+
+function createGeometry(vertices4D) {
+    // Project 4D vertices to 3D
+    vertices3D = vertices4D.map(v4d => project4Dto3D(v4d, projectionFactor));
+
+    // Create geometry
+    const geometry = new THREE.BufferGeometry();
+    const positions = new Float32Array(vertices3D.length * 3);
+    for (let i = 0; i < vertices3D.length; i++) {
+        positions[i * 3] = vertices3D[i][0];
+        positions[i * 3 + 1] = vertices3D[i][1];
+        positions[i * 3 + 2] = vertices3D[i][2];
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+     let indices = [];
+    if (vertices4D.length === 16) { // Hypercube
+        indices = [];
+        for (let i = 0; i < 16; i++) {
+            for (let j = i + 1; j < 16; j++) {
+                let diffCount = 0;
+                for (let dim = 0; dim < 4; dim++) {
+                    if (hypercubeVertices4D[i][dim] !== hypercubeVertices4D[j][dim]) {
+                        diffCount++;
+                    }
+                }
+                if (diffCount === 1) {
+                    indices.push(i, j);
+                }
+            }
+        }
+    } else if (vertices4D.length === 5) { // 4D Triangle
+          indices = [
+            0, 1,
+            0, 2,
+            0, 3,
+            0, 4,
+            1, 2,
+            1, 3,
+            1, 4,
+            2, 3,
+            2, 4,
+            3, 4
+        ];
+    }
+    geometry.setIndex(indices);
+    return geometry;
+}
+
+// Initial shape
+let projectionFactor = 1.5;
+hypercubeVertices4D = createHypercubeVertices();
+let geometry = createGeometry(hypercubeVertices4D);
+const material = new THREE.LineBasicMaterial({ color: 0x44aa88 });
+const shape = new THREE.LineSegments(geometry, material);
+scene.add(shape);
+currentGeometry = geometry;
+
+camera.position.z = 5;
+
+let isDragging = false;
+let previousMousePosition = { x: 0, y: 0 };
+let rotationX = 0;
+let rotationY = 0;
+let zoomSpeed = 0.05;
+let rotationSpeed = 0.002;
+let dampingFactor = 0.95;
+let targetRotationX = 0;
+let targetRotationY = 0;
+let velocityX = 0;
+let velocityY = 0;
+let rotationAxes = [0, 1];
+
+ function rotate4D(vertices4D, axes, angle) {
+    const u = axes[0];
+    const v = axes[1];
+    const cosAngle = Math.cos(angle);
+    const sinAngle = Math.sin(angle);
+    return vertices4D.map(vertex => {
+        const newVertex = [...vertex];
+        const a = vertex[u];
+        const b = vertex[v];
+        newVertex[u] = a * cosAngle - b * sinAngle;
+        newVertex[v] = a * sinAngle + b * cosAngle;
+        return newVertex;
+    });
+}
+
+function rotateScene() {
+    velocityX *= dampingFactor;
+    velocityY *= dampingFactor;
+    rotationX += velocityX;
+    rotationY += velocityY;
+    targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
+
+    // Apply 4D rotation
+    hypercubeVertices4D.forEach((v, index) => {
+        const rotatedVertex = rotate4D([v], rotationAxes, rotationX)[0];
+        const projectedVertex = project4Dto3D(rotatedVertex, projectionFactor);
+        vertices3D[index][0] = projectedVertex[0];
+        vertices3D[index][1] = projectedVertex[1];
+        vertices3D[index][2] = projectedVertex[2];
+    });
+
+    // Update the 3D geometry
+    const positions = new Float32Array(vertices3D.length * 3);
+    for (let i = 0; i < vertices3D.length; i++) {
+        positions[i * 3] = vertices3D[i][0];
+        positions[i * 3 + 1] = vertices3D[i][1];
+        positions[i * 3 + 2] = vertices3D[i][2];
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.attributes.position.needsUpdate = true;
+}
+
+function onMouseDown(event) {
+    isDragging = true;
+    previousMousePosition = {
+        x: event.clientX,
+        y: event.clientY
+    };
+    canvas.style.cursor = 'grabbing';
+}
+
+function onMouseMove(event) {
+    if (!isDragging) {
+        return;
+    }
+    const deltaX = event.clientX - previousMousePosition.x;
+    const deltaY = event.clientY - previousMousePosition.y;
+    velocityX = deltaY * 0.005;
+    velocityY = deltaX * 0.005;
+    targetRotationX += velocityX;
+    targetRotationY += velocityY;
+    previousMousePosition = {
+        x: event.clientX,
+        y: event.clientY
+    };
+}
+
+function onMouseUp() {
+    isDragging = false;
+    canvas.style.cursor = 'grab';
+}
+
+function onMouseWheel(event) {
+    event.preventDefault();
+    if (event.deltaY < 0) {
+        projectionFactor += zoomSpeed;
+    } else if (event.deltaY > 0) {
+        projectionFactor -= zoomSpeed;
+    }
+    projectionFactor = Math.max(1.1, Math.min(10, projectionFactor));
+     const vertices3D = hypercubeVertices4D.map(v4d => project4Dto3D(v4d, projectionFactor));
+    const positions = new Float32Array(vertices3D.length * 3);
+    for (let i = 0; i < vertices3D.length; i++) {
+        positions[i * 3] = vertices3D[i][0];
+        positions[i * 3 + 1] = vertices3D[i][1];
+        positions[i * 3 + 2] = vertices3D[i][2];
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.attributes.position.needsUpdate = true;
+}
+
+canvas.addEventListener('mousedown', onMouseDown);
+canvas.addEventListener('mousemove', onMouseMove);
+canvas.addEventListener('mouseup', onMouseUp);
+canvas.addEventListener('wheel', onMouseWheel);
+
+function animate() {
+    requestAnimationFrame(animate);
+    rotateScene();
+    renderer.render(scene, camera);
+}
+
+animate();
+
+// Event listeners for the rotation buttons
+document.getElementById('xyRotation').addEventListener('click', () => {
+    rotationAxes = [0, 1];
+    rotationX = 0;
+    rotationY = 0;
+});
+document.getElementById('xzRotation').addEventListener('click', () => {
+    rotationAxes = [0, 2];
+    rotationX = 0;
+    rotationY = 0;
+});
+document.getElementById('xwRotation').addEventListener('click', () => {
+    rotationAxes = [0, 3];
+    rotationX = 0;
+    rotationY = 0;
+});
+document.getElementById('yzRotation').addEventListener('click', () => {
+    rotationAxes = [1, 2];
+    rotationX = 0;
+    rotationY = 0;
+});
+document.getElementById('ywRotation').addEventListener('click', () => {
+    rotationAxes = [1, 3];
+    rotationX = 0;
+    rotationY = 0;
+});
+document.getElementById('zwRotation').addEventListener('click', () => {
+    rotationAxes = [2, 3];
+    rotationX = 0;
+    rotationY = 0;
+});
+
+document.getElementById('hypercubeButton').addEventListener('click', () => {
+    scene.remove(shape);
+    hypercubeVertices4D = createHypercubeVertices();
+    geometry = createGeometry(hypercubeVertices4D);
+    const material = new THREE.LineBasicMaterial({ color: 0x44aa88 });
+    shape = new THREE.LineSegments(geometry, material);
+    scene.add(shape);
+    currentGeometry = geometry;
+     // Reset rotation
+    rotationX = 0;
+    rotationY = 0;
+    rotationAxes = [0, 1];
+});
+
+document.getElementById('4dTriangleButton').addEventListener('click', () => {
+    scene.remove(shape);
+    hypercubeVertices4D = create4DTriangleVertices();
+    geometry = createGeometry(hypercubeVertices4D);
+    const material = new THREE.LineBasicMaterial({ color: 0x44aa88 });
+    shape = new THREE.LineSegments(geometry, material);
+    scene.add(shape);
+    currentGeometry = geometry;
+     // Reset rotation
+    rotationX = 0;
+    rotationY = 0;
+    rotationAxes = [0, 1];
+});
+
+// Add keyboard event listeners
+document.addEventListener('keydown', (event) => {
+    switch (event.key) {
+        case 'ArrowLeft':
+            rotationY += 0.1; // Rotate left
+            break;
+        case 'ArrowRight':
+            rotationY -= 0.1; // Rotate right
+            break;
+        case 'ArrowUp':
+            rotationX += 0.1;   // Rotate up
+            break;
+        case 'ArrowDown':
+            rotationX -= 0.1; // Rotate down
+            break;
+    }
+});
